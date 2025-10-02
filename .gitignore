@@ -1,0 +1,19 @@
+__pycache__/
+checkpoints
+data
+deprecated
+res
+srm
+notes.txt
+best_models_params
+Read Me Climate Change Data.docx
+datafips_geo_merge.csv
+model_1_basic_params
+model_1_basic_params.pkl
+model_3.0.pkl
+model_experiments.csv
+model_experiments.pickle
+
+
+
+
