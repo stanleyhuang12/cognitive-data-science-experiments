@@ -1,11 +1,10 @@
 from tools_rec import * 
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LinearRegression
-
+from itertools import product
 
 def compute_true_residuals(y, y_hat): 
     return (y - y_hat) ** 2
-
 
 def compute_smoothed_residuals(y, baseline_y, alg_y): 
     return (
@@ -16,7 +15,6 @@ def compute_smoothed_residuals(y, baseline_y, alg_y):
 
 def compute_diff(y, y_hat):
     return (y - y_hat)
-
 
 def create_interaction_terms(df, cat1, cat2, prefix): 
     new_df = df.copy()
@@ -84,26 +82,31 @@ def lookup_features_from_top_k_residuals(df, feature_eval, residuals, k):
     return descriptive_stats
 
 
-def compute_regret_mass_for_binary_features(df, smoothed_resids_cols, bundled_feature=None): 
+def compute_regret_mass_for_binary_features(df, smoothed_resids_col, bundled_feature=None, verbose=True, column_maps=None): 
     
     """
+    Description: 
     Regret mass is the average smoothed residuals of observations in a group G * proportion of observations that fall in group G.
     
-    Requires two inputs: 
-    - .df: A wide pandas.Dataframe of the dataset. Binary variables are collapsed to multiple columns. Continuous variables? 
-    - .smoothed_resids_cols: Points to the column with smoothed residuals. 
-    - .group_columns (default: None): if None, it uses all other columns as groups, otherwise specify the list of columns 
+    Args: 
+    - df: A wide pandas.Dataframe of the dataset. Binary variables are disaggregated to multiple columns. 
+    - smoothed_resids_cols: Points to the column with smoothed residuals. 
+    - group_columns (default: None): if None, it uses all other columns as groups, otherwise specify the list of columns 
     """
     df = df.copy()
     
     if not bundled_feature: 
         group_cols = df.columns 
-        group_cols.remove(smoothed_resids_cols)
+        group_cols.remove(smoothed_resids_col)
     else: 
         group_cols = bundled_feature
     
+    if column_maps: 
+        df = df.map(column_maps)
+        
     total_obs = len(df)
-    print("Total observations: ", total_obs)
+    if verbose: 
+        print("Total observations: ", total_obs)
     
     ret_df = pd.DataFrame(columns=group_cols, index=['class_proportion', 'average_residuals', 'regret_mass'])
     
@@ -111,23 +114,131 @@ def compute_regret_mass_for_binary_features(df, smoothed_resids_cols, bundled_fe
         class_proportion = df[col].sum() / total_obs
         ret_df.loc['class_proportion', col] = class_proportion
         
-        average_residuals = np.mean(df[col] * df[smoothed_resids_cols])
+        average_residuals = np.mean(df[col] * df[smoothed_resids_col])
         ret_df.loc["average_residuals", col] = average_residuals
         
         regret_mass = class_proportion * average_residuals * 100
         ret_df.loc["regret_mass", col] = regret_mass
         
-        print("=============================")
-        print(f"Total observations in Group {col}", df[col].sum())
-        print("Class proportion:", class_proportion)
-        print("Average residuals: ", average_residuals)
-        print("Regret mass for group", regret_mass)
+        if verbose: 
+            print("=============================")
+            print(f"Total observations in Group {col}", df[col].sum())
+            print("Class proportion:", class_proportion)
+            print("Average residuals: ", average_residuals)
+            print("Regret mass for group", regret_mass)
         
     return ret_df.T
 
-def compute_regret_mass_for_k_features(): 
+
+def compute_regret_mass_for_k_features(df: pd.DataFrame, 
+                                       smoothed_residuals_col: str, 
+                                       feature_dict: dict, 
+                                       verbose=True,
+                                       columns_map=None) -> pd.DataFrame: 
+    """
+    Description: 
+    Regret mass for K binary features (non-overlapping)
+    
+    Args: 
+    - df: A wide pandas.Dataframe of the dataset. Binary variables are disaggregated to multiple columns.
+    - smoothed_residuals_col: Points to the column with smoothed residuals.
+    - feature_dict: A dictionary of bundles of features. 
+    
+    Returns: 
+    - A dataframe of class proportion, average residuals, regret mass weighted by class proportion and K features
+    
+    Example of feature_dict: 
+    `gender` and `age` are names that will be set for the returned dataframe. 
+        {
+            "gender": "female", "male", "other", # column names 
+            "age": "child", "teen", "adult", "senior", # column names 
+        }
+    """
+    
+    df = df.copy()
+    if columns_map: 
+        df = df.rename(columns_map, axis=1)
+        mapped_feature_dict = {
+            key: [columns_map.get(item, item) for item in values]
+            for key, values in feature_dict.items()
+        }
+        feature_dict = mapped_feature_dict 
+
+    
+    ### Creates a pairwise list of interaction combinations 
+    combinations = list(product(*feature_dict.values()))
+    interaction_combinations = [list(tup) for tup in combinations]
+    
+    total_obs = len(df)
+    if verbose: 
+        print("Total observations: ", total_obs)
+    ret_df = pd.DataFrame(columns=['class_proportion', 'average_residuals', 'regret_mass'])
+    
+    for c in interaction_combinations: 
+        index_name = " x ".join(c)
+    
+        class_obs = (df[c] == 1).all(axis=1).sum()
+        class_proportion = class_obs / total_obs
+        ret_df.loc[index_name, "class_proportion"] = class_proportion
+
+        matrix = df[c + [smoothed_residuals_col]].values
+        smoothed_residuals = np.prod(matrix, axis=1)
+        average_residuals = np.mean(smoothed_residuals)
+        ret_df.loc[index_name, "average_residuals"] = average_residuals
+        
+        regret_mass = average_residuals * class_proportion * 100 
+        ret_df.loc[index_name, "regret_mass"] = regret_mass
+        
+        if verbose: 
+            print("=============================")
+            print(f"Total observations in Group {index_name}", class_obs)
+            print("Class proportion:", class_proportion)
+            print("Average residuals: ", average_residuals)
+            print("Regret mass for group", regret_mass)
+    
+    ret_df['normalized_regret_mass'] = ret_df['regret_mass'] / ret_df['regret_mass'].sum()
+    
+    return ret_df
+
+def compare_top_n_smoothed_residuals(df, 
+                                     smoothed_residuals, 
+                                     top_N, 
+                                     feature_dict, 
+                                     **kwargs) -> tuple:
+    """Compares `top_N` smoothed residuals' regret mass distribution to the full dataset. Returns a data that describes class proportion, 
+    average residuals, normalized and unnormalized regret mass for each class and a 
+    Jensen-Shannon divergence score for smoothed residual distribution. 
+    
+    Inputs: 
+    
+    - A dataframe 
+    - A dataframe of the top N smoothed residuals 
+    
+    Computes `regret mass` and `normalized regret mass` for all features for both full dataset and top N smoothed residuals dataset
+    
+    Returns: 
+    - A dataset of class proportions, average smoothed residuals, normalized and raw regret mass scores for each class. 
+    - A Jensen-Shannon divergence score to compare distributions of smoothed residuas as evidence of latent classes. 
+    """
+    
+    
+    
+        
+        
+       
+        
+
+
+greet = {"hi": ["hello", "bonjour"], 
+ "bye": ["ciao", "byee", "wave"]}
+
+
+list(product(*greet.values()))
+    
     
 
+    
+    
 
 
 

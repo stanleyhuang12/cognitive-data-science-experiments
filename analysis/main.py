@@ -180,9 +180,10 @@ y_pred_lr = lr.predict(X_fit)
 print(f'R2 score: {lr.score(X_fit, y)}')
 print(f'The R2 score was 0.42')
 
+y_actual = y.reshape(-1, 1)
 y_pred_lr = y_pred_lr.reshape(-1, 1)
-y_pred_mlp = y_pred_t.cpu().numpy().reshape(-1, 1)
-exp_1_resids = pd.DataFrame(np.hstack((y, y_pred_lr, y_pred_mlp)), columns=['y_actual', 'y_pred_lr', 'y_pred_mlp'])
+y_pred_mlp = y_pred_t.cpu().numpy()
+exp_1_resids = pd.DataFrame(np.hstack((y_actual, y_pred_lr, y_pred_mlp)), columns=['y_actual', 'y_pred_lr', 'y_pred_mlp'])
 
 """Start of SRM algorithm and comparing residuals"""
 
@@ -254,9 +255,22 @@ exp_1_resids
 age_columns = ["aged1", "aged2", "aged3", "aged5", "aged6"]
 age_columns_name = ['18-24', '25-34', '35-44', '55-64', '65+']
 race_columns = ["raced2", "raced3", "raced4"]
+race_columns_map = {
+    "raced1": "White",
+    "raced2": "Black",
+    "raced3": "Hispanic",
+    "raced4": "Other"
+}
 race_column_names = ['Black', 'Hispanic', 'Other']
 ideology_columns = ['ideologyd1', 'ideologyd2', 'ideologyd4', 'ideologyd5']
 ideology_columns_names = ['Very liberal', 'Liberal', 'Conservative', 'Very Conservative']
+ideology_columns_map = {
+    "ideologyd1": "Very liberal", 
+    "ideologyd2": "Liberal",
+    "ideologyd3": "Independent", 
+    "ideologyd4": "Conservative", 
+    "ideologyd5": "Very Conservative"
+}
 edu_columns = ['edu1', 'edu3', 'edu4']
 edu_columns_names = ['High school\nor less',  'College Grad', 'Post-grad']
 party_columns = ['PDd1', 'PDd2', 'PDd3', 'PDd5', 'PDd6', 'PDd7']
@@ -296,14 +310,50 @@ ideology_t100_matrix['ideologyd3'] = np.where((top_100_smoothed_resids[ideology_
                                                         0)
 ideology_columns + ['ideologyd3']
 
+
+race_matrix = data_w_resids[race_columns + residual_columns].copy()
+race_matrix['raced1'] = np.where((data_w_resids[race_columns] == 0).all(axis=1),
+                                 1, 
+                                 0)
+
+race_t100_matrix = top_100_smoothed_resids[race_columns + residual_columns].copy()
+race_t100_matrix['raced1'] = np.where((top_100_smoothed_resids[race_columns] == 0).all(axis=1),
+                                 1, 
+                                 0)
+
+ideo_race_matrix = pd.concat([race_matrix, ideology_matrix.drop(residual_columns, axis=1)], axis=1)
+
+(ideo_race_matrix[['ideologyd1', 'raced1']] == 1).all(axis=1).sum()
 regret_stats_df = compute_regret_mass_for_binary_features(df=ideology_matrix, 
-                                        smoothed_resids_cols='smoothed_resids', 
-                                        bundled_feature=ideology_columns + ['ideologyd3']
-)
+                                        smoothed_resids_col='smoothed_resids', 
+                                        bundled_feature=ideology_columns + ['ideologyd3'],
+                                        verbose=False)
 
 regret_stats_t100_df = compute_regret_mass_for_binary_features(df=ideology_t100_matrix, 
-                                        smoothed_resids_cols='smoothed_resids',
-                                        bundled_feature=ideology_columns+['ideologyd3'])
+                                        smoothed_resids_col='smoothed_resids',
+                                        bundled_feature=ideology_columns+['ideologyd3'], 
+                                        verbose=False)
+
+regret_race_df = compute_regret_mass_for_binary_features(df=race_matrix, 
+                                        smoothed_resids_col='smoothed_resids',
+                                        bundled_feature=race_columns + ['raced1'],
+                                        verbose=False)
+
+regret_race_t100_df = compute_regret_mass_for_binary_features(df=race_t100_matrix, 
+                                        smoothed_resids_col='smoothed_resids',
+                                        bundled_feature=race_columns + ['raced1'], 
+                                        verbose=False)
+compute_regret_mass_for_k_features(
+    df=ideo_race_matrix, 
+    smoothed_residuals_col='smoothed_resids',
+    feature_dict={
+        "ideology": ["ideologyd1", "ideologyd2", "ideologyd3", "ideologyd4", "ideologyd5"],
+        "race": ["raced1", "raced2", "raced3", "raced4"]
+    },
+    columns_map={**ideology_columns_map, **race_columns_map}
+)
+
+
 
 regret_stats_df["dataset"] = "full"
 regret_stats_t100_df["dataset"] = "top100"
@@ -360,6 +410,20 @@ plt.ylabel("Regret mass")
 plt.title("Comparison of Regret Mass across Ideology Groups")
 plt.legend(title="Dataset")
 plt.show()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 def plot_srm_critique_intervention(data, columns, var, category_names, interact_cols=None, additional_desc="", k_smoothed_resids=100): 
     df = data.copy()
