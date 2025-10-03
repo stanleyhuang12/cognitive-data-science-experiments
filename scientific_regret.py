@@ -82,6 +82,57 @@ def lookup_features_from_top_k_residuals(df, feature_eval, residuals, k):
     descriptive_stats = filtered_df.describe()
     descriptive_stats.map(lambda x: np.round(x, 4))
     return descriptive_stats
+
+
+def compute_regret_mass_for_binary_features(df, smoothed_resids_cols, bundled_feature=None): 
+    
+    """
+    Regret mass is the average smoothed residuals of observations in a group G * proportion of observations that fall in group G.
+    
+    Requires two inputs: 
+    - .df: A wide pandas.Dataframe of the dataset. Binary variables are collapsed to multiple columns. Continuous variables? 
+    - .smoothed_resids_cols: Points to the column with smoothed residuals. 
+    - .group_columns (default: None): if None, it uses all other columns as groups, otherwise specify the list of columns 
+    """
+    df = df.copy()
+    
+    if not bundled_feature: 
+        group_cols = df.columns 
+        group_cols.remove(smoothed_resids_cols)
+    else: 
+        group_cols = bundled_feature
+    
+    total_obs = len(df)
+    print("Total observations: ", total_obs)
+    
+    ret_df = pd.DataFrame(columns=group_cols, index=['class_proportion', 'average_residuals', 'regret_mass'])
+    
+    for col in group_cols: 
+        class_proportion = df[col].sum() / total_obs
+        ret_df.loc['class_proportion', col] = class_proportion
+        
+        average_residuals = np.mean(df[col] * df[smoothed_resids_cols])
+        ret_df.loc["average_residuals", col] = average_residuals
+        
+        regret_mass = class_proportion * average_residuals * 100
+        ret_df.loc["regret_mass", col] = regret_mass
+        
+        print("=============================")
+        print(f"Total observations in Group {col}", df[col].sum())
+        print("Class proportion:", class_proportion)
+        print("Average residuals: ", average_residuals)
+        print("Regret mass for group", regret_mass)
+        
+    return ret_df.T
+
+def compute_regret_mass_for_k_features(): 
+    
+
+
+
+
+def compute_regret_concentration_for_binary_features(): 
+    pass
         
         
 

@@ -3,23 +3,29 @@ from tools_rec import *
 from ray import tune
 from sklearn.model_selection import KFold
 import matplotlib
-matplotlib.use('TkAgg')  # or 'Agg' if you don’t need to display the plot
+matplotlib.use('TkAgg') 
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import KFold
 from torch.utils.data import TensorDataset, DataLoader
 from torcheval.metrics import R2Score
 from sklearn.linear_model import LinearRegression
 import math
-from plot_graphs import plot_nn_training_validation_loss
+# from plot_graphs import plot_nn_training_validation_loss
 
+
+""" This script restores the best neural network found from the Bayesian hyperparameter search and performs subsequent analyses. """
+
+## Climate change predictions without county data 
 data_wo_county = pd.read_csv('/Users/stanleyhuang/Desktop/01 Projects/YAB/cds_climate_change_perception/Climate Change Perceptions/data/CCES2012_CSVFormat_NEW_WC.csv')
 
-
+## Hyperparameter search space 
 search_space_init_configs = {
     'num_layers': tune.randint(1, 8),
     'base_exp': tune.randint(3, 9),
     'lr': tune.loguniform(1e-5, 1e-2),
 }
+
+## Training configurations 
     
 train_configs_without_geocodes = {
     'wo_county': 1, 
@@ -30,7 +36,11 @@ train_configs_without_geocodes = {
     'batch_size': 16384, 
     'activation_fn': 0, # Overwrite and force the model to perform tanh using a symmetric and scaled value 
 }
+
+## Set seed 
 torch.manual_seed(123)
+
+## train function for training neural network 
 def new_train_wo_geocodes(config): 
     
     # Train configs is a dictionary of items that does not vary 
@@ -129,50 +139,28 @@ def new_train_wo_geocodes(config):
         
         print(f'Epoch {epoch}: Training loss {averaged_train_loss}, Validation loss {valid_loss}, R2 Score {model_r2}')
 
+
 exp_path_wo_county = "/Users/stanleyhuang/Desktop/01 Projects/YAB/cds_climate_change_perception/Climate Change Perceptions/checkpoints/env_pred_algo_run_without_county"
+
+## Run to restore results from experiment 
 results_wo_county = tune.Tuner.restore('/Users/stanleyhuang/Desktop/01 Projects/YAB/cds_climate_change_perception/Climate Change Perceptions/checkpoints/env_pred_algo_run_without_county', new_train_wo_geocodes)
 result_grid_wo_county = results_wo_county.get_results()
+
 best_results = result_grid_wo_county.get_best_result(metric='best_r2_score', mode='max')
-
-
 load_data = torch.load(os.path.join(best_results.checkpoint.path, "model.pth"))
 
+# Run to retrieve the best neural network model from hyperparameter tuning
 merged_configs = {**train_configs_without_geocodes, **best_results.config}
 model = initialize_model(merged_configs)
 nn_model = model.load_state_dict(load_data)
 
-
+## Read in dataset 
 df_wo_codes = pd.read_csv(train_configs_without_geocodes['file_path'])
-df_w_codes = pd.read_csv("data/CCES2012_CSVFormat_NEW.csv")
-X = df_w_codes.drop(['CC12'], axis=1).values
-y = df_w_codes['CC12'].values - 1
+X = df_wo_codes.drop(['CC12'], axis=1).values
+y = df_wo_codes['CC12'].values-1
 
 sc = StandardScaler()
-lr = LinearRegression()
-another_reg = LinearRegression()
-kf = KFold(n_splits=5, shuffle=True, random_state=42)
-
-train_idx, valid_idx = next(iter(kf.split(X)))
-len(train_idx)
-len(valid_idx)
-X_train, y_train = X[train_idx], y[train_idx]
-X_test, y_test = X[valid_idx], y[valid_idx]
-
-lr.fit(X_train, y_train)
-y_pred = lr.predict(X_test)
-lr.score(X_test, y_test)
-r2_score(y_test, y_pred)
-
-another_reg.fit(X, y)
-another_reg.score(X, y)
-
-
-lr.fit(X, y)
-y_pred_lr = lr.predict(X)
-print('R2 for Linear Model:', lr.score(X, y))
-
-plot_nn_training_validation_loss(X, y, intervals=10, configs=merged_configs)
-
+X_fit = sc.fit_transform(X)
 
 model.eval()
 with torch.no_grad(): 
@@ -183,30 +171,85 @@ with torch.no_grad():
     r2_scorer.update(y_pred_t, y_t)
     r2_score = r2_scorer.compute()
     print(f'R2 score: {r2_score}')
-    
-y = y.reshape(-1, 1)
+    print('The R2 score is 0.44') 
+
+lr = LinearRegression()
+lr.fit(X_fit, y)
+lr.score(X_fit, y)
+y_pred_lr = lr.predict(X_fit)
+print(f'R2 score: {lr.score(X_fit, y)}')
+print(f'The R2 score was 0.42')
+
 y_pred_lr = y_pred_lr.reshape(-1, 1)
 y_pred_mlp = y_pred_t.cpu().numpy().reshape(-1, 1)
 exp_1_resids = pd.DataFrame(np.hstack((y, y_pred_lr, y_pred_mlp)), columns=['y_actual', 'y_pred_lr', 'y_pred_mlp'])
 
-
-
 """Start of SRM algorithm and comparing residuals"""
-
 
 exp_1_resids['lr_resids'] = compute_true_residuals(exp_1_resids['y_actual'], exp_1_resids['y_pred_lr'])
 exp_1_resids['mlp_resids'] = compute_true_residuals(exp_1_resids['y_actual'], exp_1_resids['y_pred_mlp'])
-
+exp_1_resids['raw_resids'] = compute_true_residuals(y=exp_1_resids['y_actual'], y_hat=exp_1_resids['y_pred_lr'])
 exp_1_resids['smoothed_resids'] = compute_smoothed_residuals(y=exp_1_resids['y_actual'], 
                                                              baseline_y=exp_1_resids['y_pred_lr'],
                                                              alg_y=exp_1_resids['y_pred_mlp'])
 exp_1_resids['lr_pred_diff'] = exp_1_resids['y_actual']-exp_1_resids['y_pred_lr']
 exp_1_resids['mlp_pred_diff'] = exp_1_resids['y_actual']-exp_1_resids['y_pred_mlp']
 
-exp_1_resids = data_wo_county.merge(exp_1_resids, left_index=True, right_index=True)
 
-top_100_smoothed_resids = exp_1_resids.sort_values(by='smoothed_resids', ascending=False).reset_index(drop=True).loc[:100]
+""" Merge table of residuals with the observation data """
+data_w_resids = data_wo_county.merge(exp_1_resids, left_index=True, right_index=True)
 
+top_100_smoothed_resids = data_w_resids[data_w_resids['smoothed_resids'] > data_w_resids['raw_resids']] \
+    .sort_values(by='smoothed_resids', ascending=False) \
+    .reset_index(drop=True).loc[:100]
+
+"""
+exp_1_resids 
+>>> exp_1_resids
+       y_actual  y_pred_lr  y_pred_mlp  lr_resids  mlp_resids  smoothed_resids  lr_pred_diff  mlp_pred_diff
+0           4.0   2.714911    2.782324   1.651454    1.482736         0.004544      1.285089       1.217676
+1           1.0   1.973241    2.199925   0.947198    1.439819         0.051386     -0.973241      -1.199925
+2           4.0   2.002136    2.249970   3.991461    3.062603         0.061422      1.997864       1.750030
+3           3.0   2.214819    2.126564   0.616509    0.762890         0.007789      0.785181       0.873436
+4           3.0   2.920813    2.881279   0.006271    0.014095         0.001563      0.079187       0.118721
+...         ...        ...         ...        ...         ...              ...           ...            ...
+52608       4.0   3.534460    3.851899   0.216727    0.021934         0.100767      0.465540       0.148101
+52609       4.0   3.645894    3.825973   0.125391    0.030285         0.032428      0.354106       0.174027
+52610       4.0   3.493511    3.766567   0.256531    0.054491         0.074560      0.506489       0.233433
+52611       1.0   2.123840    1.912484   1.263017    0.832627         0.044671     -1.123840      -0.912484
+52612       2.0   2.572913    2.413858   0.328229    0.171279         0.025298     -0.572913      -0.413858
+
+>>> data_w_resids
+       tmaxw_3010  CC12  Gender  ccvar1_30_10  ccvar2_30_10  ccvar3_30_10  ...  y_pred_mlp  lr_resids  mlp_resids  smoothed_resids  lr_pred_diff  mlp_pred_diff
+0       187.45000     5       0           0.0           0.0     43.340000  ...    2.782324   1.651454    1.482736         0.004544      1.285089       1.217676
+1       187.45000     2       1           0.0           0.0     43.340000  ...    2.199925   0.947198    1.439819         0.051386     -0.973241      -1.199925
+2       187.45000     5       0           0.0           0.0     43.340000  ...    2.249970   3.991461    3.062603         0.061422      1.997864       1.750030
+3       187.45000     4       1           0.0           0.0     43.340000  ...    2.126564   0.616509    0.762890         0.007789      0.785181       0.873436
+4       187.45000     4       1           0.0           0.0     43.340000  ...    2.881279   0.006271    0.014095         0.001563      0.079187       0.118721
+...           ...   ...     ...           ...           ...           ...  ...         ...        ...         ...              ...           ...            ...
+52608   245.25999     5       1           0.0           0.0      0.000000  ...    3.851899   0.216727    0.021934         0.100767      0.465540       0.148101
+52609   245.25999     5       0           0.0           0.0      0.000000  ...    3.825973   0.125391    0.030285         0.032428      0.354106       0.174027
+52610   245.25999     5       1           0.0           0.0      0.000000  ...    3.766567   0.256531    0.054491         0.074560      0.506489       0.233433
+52611   195.66000     2       1           0.0           0.0     47.060001  ...    1.912484   1.263017    0.832627         0.044671     -1.123840      -0.912484
+52612   195.66000     3       1           0.0           0.0     47.060001  ...    2.413858   0.328229    0.171279         0.025298     -0.572913      -0.413858
+
+>>> top_100_smoothed_resids
+     tmaxw_3010  CC12  Gender  ccvar1_30_10  ccvar2_30_10  ccvar3_30_10  ...  lr_resids  mlp_resids  smoothed_resids  lr_pred_diff  mlp_pred_diff  raw_resids
+0     162.00000     3       1          48.0           0.0      0.000000  ...   0.003767    0.945378         0.829795      0.061375       0.972306    0.003767
+1     219.17999     2       1           0.0           0.0      0.000000  ...   0.000918    0.789542         0.736620     -0.030296      -0.888562    0.000918
+2     232.42999     2       0           0.0           0.0      0.000000  ...   0.002380    0.808067         0.722743     -0.048783      -0.898926    0.002380
+3     198.03999     2       0           0.0           0.0     16.600000  ...   0.007525    0.828733         0.678323     -0.086744      -0.910348    0.007525
+4     186.36000     2       1           0.0           0.0     25.129999  ...   0.195724    1.557942         0.649263     -0.442407      -1.248175    0.195724
+..          ...   ...     ...           ...           ...           ...  ...        ...         ...              ...           ...            ...         ...
+96    303.32001     2       0           0.0           0.0      0.000000  ...   0.037648    0.571962         0.316127     -0.194030      -0.756282    0.037648
+97    192.03000     4       0           0.0           0.0      3.280000  ...   0.255588    0.003170         0.315688     -0.505557       0.056304    0.255588
+98    227.73000     5       0           0.0           0.0      0.000000  ...   0.302460    1.236023         0.315622      0.549963       1.111766    0.302460
+99    196.00000     4       0           0.0           0.0     34.000000  ...   0.234618    0.005981         0.315522     -0.484374       0.077340    0.234618
+100   241.99001     3       0           0.0           0.0      0.000000  ...   0.285053    0.000709         0.314204      0.533904      -0.026635    0.285053
+"""
+
+#exp_1_resids = data_wo_county.merge(exp_1_resids, left_index=True, right_index=True)
+# top_100_smoothed_resids = exp_1_resids.sort_values(by='smoothed_resids', ascending=False).reset_index(drop=True).loc[:100]
 
 age_columns = ["aged1", "aged2", "aged3", "aged5", "aged6"]
 age_columns_name = ['18-24', '25-34', '35-44', '55-64', '65+']
@@ -240,6 +283,84 @@ label_map = {
     ],
     'party': ['Strong\nDem', 'Dem', 'Lean\nDem', 'Ind', 'Lean\nRep', 'Rep', 'Strong\nRep']
 }
+residual_columns = ["raw_resids", "smoothed_resids"]
+
+ideology_matrix = data_w_resids[ideology_columns + residual_columns].copy()
+ideology_matrix['ideologyd3'] = np.where((data_w_resids[ideology_columns] == 0).all(axis=1),
+                                         1, 
+                                         0)
+
+ideology_t100_matrix = top_100_smoothed_resids[ideology_columns + residual_columns].copy()
+ideology_t100_matrix['ideologyd3'] = np.where((top_100_smoothed_resids[ideology_columns] == 0).all(axis=1), 
+                                                        1,
+                                                        0)
+ideology_columns + ['ideologyd3']
+
+regret_stats_df = compute_regret_mass_for_binary_features(df=ideology_matrix, 
+                                        smoothed_resids_cols='smoothed_resids', 
+                                        bundled_feature=ideology_columns + ['ideologyd3']
+)
+
+regret_stats_t100_df = compute_regret_mass_for_binary_features(df=ideology_t100_matrix, 
+                                        smoothed_resids_cols='smoothed_resids',
+                                        bundled_feature=ideology_columns+['ideologyd3'])
+
+regret_stats_df["dataset"] = "full"
+regret_stats_t100_df["dataset"] = "top100"
+merged = pd.concat([regret_stats_df, regret_stats_t100_df])
+
+def normalize_regret(df, label):
+    df = df.copy()
+    df["regret_mass"] = df["regret_mass"].astype(float)  # make sure it's numeric
+    df["regret_mass_norm"] = df["regret_mass"] / df["regret_mass"].sum()
+    df["dataset"] = label
+    return df
+
+# Apply to both datasets
+regret_stats_norm = normalize_regret(regret_stats_df, "full")
+regret_stats_t100_norm = normalize_regret(regret_stats_t100_df, "top100")
+
+# Combine
+regret_combined = pd.concat([regret_stats_norm, regret_stats_t100_norm])
+
+datasets = regret_combined["dataset"].unique()
+groups = regret_combined.index.unique()
+x = np.arange(len(groups))  # numeric x positions
+width = 0.35
+
+plt.figure(figsize=(10,6))
+
+for i, dataset in enumerate(datasets):
+    subset = regret_combined[regret_combined["dataset"] == dataset]
+    plt.bar(
+        x + i*width, 
+        subset["regret_mass_norm"].values, 
+        width, 
+        label=dataset
+    )
+
+plt.xticks(x + width/2, groups, rotation=45)
+plt.ylabel("Normalized Regret Mass")
+plt.title("Regret Mass by Group")
+plt.legend()
+plt.tight_layout()
+plt.show()
+import seaborn as sns
+import matplotlib.pyplot as plt
+
+plt.figure(figsize=(10,6))
+sns.barplot(
+    data=merged.reset_index(), 
+    x="index", 
+    y="regret_mass", 
+    hue="dataset"
+)
+plt.xlabel("Ideology group")
+plt.ylabel("Regret mass")
+plt.title("Comparison of Regret Mass across Ideology Groups")
+plt.legend(title="Dataset")
+plt.show()
+
 def plot_srm_critique_intervention(data, columns, var, category_names, interact_cols=None, additional_desc="", k_smoothed_resids=100): 
     df = data.copy()
     
@@ -304,6 +425,7 @@ plot_srm_critique_intervention(exp_1_resids,
                                interact_cols=edu_columns,
                                additional_desc="Augmented model adjusted for interaction between ideology and education")
 np.unique(np.argmax(exp_1_resids[party_columns], axis=1))
+
 def plot_side_by_side_histograms(data1, data2, category_labels, title1="Group 1", title2="Group 2"):
     """
     Plots two histograms side-by-side with discrete category labels.
@@ -675,9 +797,6 @@ plt.tight_layout()
 plt.show()
 
 relevant_cols = [col for col in top_100_smoothed_resids if col not in resids_cols]
-
-
-
 
 
 plt.bar()
