@@ -299,31 +299,16 @@ label_map = {
 }
 residual_columns = ["raw_resids", "smoothed_resids"]
 
+
+
+
+# Ideology regret mass 
 ideology_matrix = data_w_resids[ideology_columns + residual_columns].copy()
-ideology_matrix['ideologyd3'] = np.where((data_w_resids[ideology_columns] == 0).all(axis=1),
-                                         1, 
-                                         0)
+ideology_matrix['ideologyd3'] = np.where((data_w_resids[ideology_columns] == 0).all(axis=1),1, 0)
 
 ideology_t100_matrix = top_100_smoothed_resids[ideology_columns + residual_columns].copy()
-ideology_t100_matrix['ideologyd3'] = np.where((top_100_smoothed_resids[ideology_columns] == 0).all(axis=1), 
-                                                        1,
-                                                        0)
-ideology_columns + ['ideologyd3']
+ideology_t100_matrix['ideologyd3'] = np.where((top_100_smoothed_resids[ideology_columns] == 0).all(axis=1), 1,0)
 
-
-race_matrix = data_w_resids[race_columns + residual_columns].copy()
-race_matrix['raced1'] = np.where((data_w_resids[race_columns] == 0).all(axis=1),
-                                 1, 
-                                 0)
-
-race_t100_matrix = top_100_smoothed_resids[race_columns + residual_columns].copy()
-race_t100_matrix['raced1'] = np.where((top_100_smoothed_resids[race_columns] == 0).all(axis=1),
-                                 1, 
-                                 0)
-
-ideo_race_matrix = pd.concat([race_matrix, ideology_matrix.drop(residual_columns, axis=1)], axis=1)
-
-(ideo_race_matrix[['ideologyd1', 'raced1']] == 1).all(axis=1).sum()
 regret_stats_df = compute_regret_mass_for_binary_features(df=ideology_matrix, 
                                         smoothed_resids_col='smoothed_resids', 
                                         bundled_feature=ideology_columns + ['ideologyd3'],
@@ -333,27 +318,6 @@ regret_stats_t100_df = compute_regret_mass_for_binary_features(df=ideology_t100_
                                         smoothed_resids_col='smoothed_resids',
                                         bundled_feature=ideology_columns+['ideologyd3'], 
                                         verbose=False)
-
-regret_race_df = compute_regret_mass_for_binary_features(df=race_matrix, 
-                                        smoothed_resids_col='smoothed_resids',
-                                        bundled_feature=race_columns + ['raced1'],
-                                        verbose=False)
-
-regret_race_t100_df = compute_regret_mass_for_binary_features(df=race_t100_matrix, 
-                                        smoothed_resids_col='smoothed_resids',
-                                        bundled_feature=race_columns + ['raced1'], 
-                                        verbose=False)
-compute_regret_mass_for_k_features(
-    df=ideo_race_matrix, 
-    smoothed_residuals_col='smoothed_resids',
-    feature_dict={
-        "ideology": ["ideologyd1", "ideologyd2", "ideologyd3", "ideologyd4", "ideologyd5"],
-        "race": ["raced1", "raced2", "raced3", "raced4"]
-    },
-    columns_map={**ideology_columns_map, **race_columns_map}
-)
-
-
 
 regret_stats_df["dataset"] = "full"
 regret_stats_t100_df["dataset"] = "top100"
@@ -370,12 +334,10 @@ def normalize_regret(df, label):
 regret_stats_norm = normalize_regret(regret_stats_df, "full")
 regret_stats_t100_norm = normalize_regret(regret_stats_t100_df, "top100")
 
-# Combine
 regret_combined = pd.concat([regret_stats_norm, regret_stats_t100_norm])
-
 datasets = regret_combined["dataset"].unique()
 groups = regret_combined.index.unique()
-x = np.arange(len(groups))  # numeric x positions
+x = np.arange(len(groups)) 
 width = 0.35
 
 plt.figure(figsize=(10,6))
@@ -391,10 +353,55 @@ for i, dataset in enumerate(datasets):
 
 plt.xticks(x + width/2, groups, rotation=45)
 plt.ylabel("Normalized Regret Mass")
-plt.title("Regret Mass by Group")
+plt.title("Regret Mass by Group For Ideology")
 plt.legend()
 plt.tight_layout()
 plt.show()
+
+# race 
+race_matrix = data_w_resids[race_columns + residual_columns].copy()
+race_matrix['raced1'] = np.where((data_w_resids[race_columns] == 0).all(axis=1),1, 0)
+
+race_t100_matrix = top_100_smoothed_resids[race_columns + residual_columns].copy()
+race_t100_matrix['raced1'] = np.where((top_100_smoothed_resids[race_columns] == 0).all(axis=1), 1, 0)
+
+regret_race_df = compute_regret_mass_for_binary_features(df=race_matrix, 
+                                        smoothed_resids_col='smoothed_resids',
+                                        bundled_feature=race_columns + ['raced1'],
+                                        verbose=False)
+
+regret_race_t100_df = compute_regret_mass_for_binary_features(df=race_t100_matrix, 
+                                        smoothed_resids_col='smoothed_resids',
+                                        bundled_feature=race_columns + ['raced1'], 
+                                        verbose=False)
+
+
+ideo_race_matrix = pd.concat([race_matrix, ideology_matrix.drop(residual_columns, axis=1)], axis=1)
+
+compute_regret_mass_for_k_features(
+    df=ideo_race_matrix, 
+    smoothed_residuals_col='smoothed_resids',
+    feature_dict={
+        "ideology": ["ideologyd1", "ideologyd2", "ideologyd3", "ideologyd4", "ideologyd5"],
+        "race": ["raced1", "raced2", "raced3", "raced4"]
+    },
+    columns_map={**ideology_columns_map, **race_columns_map}
+)
+
+ideo_race_regret= compare_top_n_smoothed_residuals(
+    df=ideo_race_matrix,
+    smoothed_residuals_col='smoothed_resids',
+    raw_residuals_col='raw_resids',
+    top_N=100, 
+    feature_dict={
+        "ideology": ["ideologyd1", "ideologyd2", "ideologyd3", "ideologyd4", "ideologyd5"],
+        "race": ["raced1", "raced2", "raced3", "raced4"]
+    },
+    columns_map={**ideology_columns_map, **race_columns_map}
+)
+
+plot_normalized_regret(ideo_race_regret)
+
 import seaborn as sns
 import matplotlib.pyplot as plt
 

@@ -201,7 +201,8 @@ def compute_regret_mass_for_k_features(df: pd.DataFrame,
     return ret_df
 
 def compare_top_n_smoothed_residuals(df, 
-                                     smoothed_residuals, 
+                                     smoothed_residuals_col, 
+                                     raw_residuals_col,
                                      top_N, 
                                      feature_dict, 
                                      **kwargs) -> tuple:
@@ -218,27 +219,71 @@ def compare_top_n_smoothed_residuals(df,
     
     Returns: 
     - A dataset of class proportions, average smoothed residuals, normalized and raw regret mass scores for each class. 
-    - A Jensen-Shannon divergence score to compare distributions of smoothed residuas as evidence of latent classes. 
+    - A Jensen-Shannon divergence score to compare distributions of smoothed residuals as evidence of latent classes that require critique. 
     """
     
+    df = df.copy()
     
+    top_N_smoothed_resids = df[(df[smoothed_residuals_col] > df[raw_residuals_col])] \
+        .sort_values(by=smoothed_residuals_col, ascending=False) \
+        .reset_index(drop=True).loc[:top_N] \
+        .copy()
     
+    full_ret_df = compute_regret_mass_for_k_features(df=df, 
+                                                     smoothed_residuals_col=smoothed_residuals_col, 
+                                                     feature_dict=feature_dict, 
+                                                     **kwargs)
+
+    
+    top_N_ret_df = compute_regret_mass_for_k_features(df=top_N_smoothed_resids, 
+                                                      smoothed_residuals_col=smoothed_residuals_col,
+                                                      feature_dict=feature_dict, 
+                                                      **kwargs)
+    
+    full_ret_df = full_ret_df.add_prefix('full_')
+    top_N_ret_df = top_N_ret_df.add_prefix(f't{top_N}_', axis=1)
+    return pd.concat([full_ret_df, top_N_ret_df], axis=1)
+        
         
         
        
-        
+import matplotlib.pyplot as plt
 
-
-greet = {"hi": ["hello", "bonjour"], 
- "bye": ["ciao", "byee", "wave"]}
-
-
-list(product(*greet.values()))
+def plot_normalized_regret(df, prefixes=("full", "t100"), figsize=(10, 6)):
+    """
+    Plots normalized regret mass columns for given prefixes.
     
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Input DataFrame with regret metrics.
+    prefixes : tuple of str, optional
+        Which prefixes to include (default: ('full', 't100')).
+    figsize : tuple, optional
+        Figure size for the plot.
+    """
+    # Build a list of all matching columns
+    norm_cols = []
+    for p in prefixes:
+        norm_cols.extend([col for col in df.columns 
+                          if col.startswith(p) and col.endswith("normalized_regret_mass")])
     
+    if not norm_cols:
+        raise ValueError(f"No matching normalized_regret_mass columns found for {prefixes}.")
+    
+    plt.figure(figsize=figsize)
+    
+    for col in norm_cols:
+        plt.plot(df.index, df[col], marker="o", label=col)
+    
+    plt.xlabel("Group")
+    plt.ylabel("Normalized Regret Mass")
+    plt.title("Normalized Regret Mass by Group")
+    plt.xticks(rotation=45, ha="right")
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
 
-    
-    
 
 
 
